@@ -1,0 +1,15 @@
+{
+  "name": "standcarvix-server",
+  "version": "10.0.0",
+  "description": "Онлайн-сервер StandCarvix v10 (WebSocket)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
