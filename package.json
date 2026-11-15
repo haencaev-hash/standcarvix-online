@@ -1,7 +1,8 @@
+
 {
   "name": "standcarvix-server",
   "version": "10.0.0",
-  "description": "Онлайн-сервер StandCarvix v10 (WebSocket)",
+  "description": "StandCarvix Online Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,6 +11,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "firebase-admin": "^13.5.0"
   }
 }
