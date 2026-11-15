@@ -6,6 +6,8 @@
 // ============================================================================
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const Accounts = require('./sc-accounts');   // [accounts] Google-аккаунты, прогресс, роли
+Accounts.init();                              // без FIREBASE_SERVICE_ACCOUNT аккаунты выключены, все игроки — гости
 
 const PORT = process.env.PORT || 8080;
 
@@ -27,7 +29,7 @@ const all = l => [...l.pl.values()];
 const bcast = (l, o) => all(l).forEach(c => send(c, o));
 const listLobbies = () => [...lobbies.values()].map(l => ({ id: l.id, name: l.name, map: l.map, players: l.pl.size, max: l.max }));
 const pub = ws => ({ id: ws.pid, name: ws.pname, skin: ws.skin, hp: ws.hp, k: ws.k, d: ws.d, ...ws.st });
-const board = l => bcast(l, { t: 'board', p: all(l).map(o => ({ id: o.pid, name: o.pname, k: o.k, d: o.d, pg: o.pg })) });
+const board = l => bcast(l, { t: 'board', p: all(l).map(o => ({ id: o.pid, name: o.pname, k: o.k, d: o.d, pg: o.pg, pn: o.acc ? o.acc.pid : 0, vf: o.acc && o.acc.verified ? 1 : 0, rl: o.acc ? o.acc.role : '' })) });
 
 // HTTP нужен Render'у для проверки «сервер жив» (адрес https://твой-сервис.onrender.com/ покажет текст)
 const server = http.createServer((req, res) => {
@@ -48,7 +50,7 @@ function leave(ws) {
 function enter(ws, l, m) {
   leave(ws);
   ws.pid = nextPid++;
-  ws.pname = String(m.name || 'Игрок').slice(0, 16);
+  ws.pname = ws.acc ? ws.acc.name : String(m.name || 'Игрок').slice(0, 16);   // [accounts] ник из аккаунта
   ws.skin = m.skin === 't' ? 't' : 'c';
   ws.st = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, cr: 0, vy: 0, air: 0, w: 'ak' };
   Object.assign(ws, { hp: 100, dead: false, deadAt: 0, inv: Date.now() + PROTECT_MS, k: 0, d: 0, lastHit: 0, lastChat: 0, pg: 0 });
@@ -57,6 +59,16 @@ function enter(ws, l, m) {
   send(ws, { t: 'joined', id: ws.pid, lobby: { id: l.id, name: l.name, map: l.map, max: l.max }, players: others });
   for (const c of all(l)) if (c !== ws) send(c, { t: 'pj', p: pub(ws) });
   board(l);
+}
+
+// [accounts] награда за убийство (не чаще 3 раз за минуту за одну и ту же жертву — защита от буста)
+function rewardKill(ws, v, hs, now) {
+  if (v.acc) Accounts.onDeath(v);
+  if (!ws.acc) return;
+  ws.kv = (ws.kv || []).filter(e => now - e.t < 60000);
+  if (ws.kv.filter(e => e.id === v.pid).length >= 3) return;
+  ws.kv.push({ id: v.pid, t: now });
+  Accounts.onKill(ws, { headshot: !!hs });
 }
 
 // Попадание: клиент сообщает, КТО попал; урон считает сервер по таблице оружия
@@ -71,6 +83,7 @@ function hit(ws, m) {
   v.hp -= WD[w] * (hs ? 3 : 1) * pm;
   if (v.hp <= 0) {
     v.hp = 0; v.dead = true; v.deadAt = now; v.d++; ws.k++;
+    rewardKill(ws, v, hs, now);   // [accounts] награда начисляется сервером
     bcast(l, { t: 'kill', by: ws.pid, id: v.pid, hs, w });
     board(l);
   } else {
@@ -116,6 +129,8 @@ function handle(ws, m) {
       bcast(ws.lobby, { t: 'chat', id: ws.pid, name: ws.pname, m: txt });
     } break;
     case 'leave': leave(ws); break;
+    case 'buy': Accounts.buy(ws, m.item).then(r => send(ws, { t: 'buy', ok: r.ok, err: r.err, p: r.p })).catch(() => {}); break;   // [accounts]
+    case 'adm': Accounts.adminSet(ws, m.pid, { verified: m.verified, gold: m.gold, xp: m.xp }).then(r => send(ws, { t: 'adm', ok: r.ok, err: r.err })).catch(() => {}); break;   // [accounts] только owner
   }
 }
 
@@ -126,10 +141,19 @@ wss.on('connection', ws => {
     if (++ws.cnt > MAX_MSG_PER_SEC) return;
     let m; try { m = JSON.parse(raw.toString()); } catch (e) { return; }
     if (!m || typeof m !== 'object') return;
-    try { handle(ws, m); } catch (e) { console.error('handler error:', e); } // одна ошибка не роняет сервер
+    const run = () => { try { handle(ws, m); } catch (e) { console.error('handler error:', e); } }; // одна ошибка не роняет сервер
+    // [accounts] hello с токеном: проверяем Firebase ID Token; следующие сообщения ждут в очереди (порядок сохраняется)
+    if (m.t === 'hello' && typeof m.token === 'string' && m.token) {
+      ws.pendingAuth = true;
+      const auth = Promise.race([Accounts.authenticate(ws, m.token), new Promise(r => setTimeout(() => r(null), 8000))])
+        .then(p => { if (p) send(ws, { t: 'profile', p }); }).catch(() => {})
+        .then(() => { ws.pendingAuth = false; });
+      ws.q = auth; return;
+    }
+    if (ws.pendingAuth) ws.q = ws.q.then(run); else run();
   });
-  ws.on('close', () => leave(ws));
-  ws.on('error', () => leave(ws));
+  ws.on('close', () => { leave(ws); Accounts.release(ws).catch(() => {}); });   // [accounts] сохранить прогресс
+  ws.on('error', () => { leave(ws); Accounts.release(ws).catch(() => {}); });
 });
 
 // состояние игроков: каждому — все остальные, 20 раз/сек
