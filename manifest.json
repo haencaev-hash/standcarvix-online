@@ -1,0 +1,20 @@
+{
+  "name": "StandCarvix",
+  "short_name": "StandCarvix",
+  "description": "StandCarvix — онлайн шутер",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#06101c",
+  "theme_color": "#06101c",
+  "lang": "ru",
+  "categories": ["games"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
